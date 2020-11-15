@@ -58,8 +58,8 @@ def create_all_vid_list_from_split(label_dict):
                 writer.writerow([str(count)+","+ dirs+","+ dirs.split('/')[-2]+','+str(label_dict[dirs.split('/')[-2]])])
                 print(str(count)+','+ dirs+","+ dirs.split('/')[-2]+','+str(label_dict[dirs.split('/')[-2]]))
                 count +=1
-            if len(all_vid) > 100:
-              break
+            # if len(all_vid) > 100:
+            #   break
             print ('--------------------------------')
 
     print("_______________________________")
