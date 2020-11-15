@@ -23,7 +23,9 @@ def create_dictionary_of_labels():
 
 def check_split():
 
-    split_1 = sio.loadmat("/home/SharedData/fabio/cgan/hmdb_i3d/split_1/att_splits.mat")
+    # split_1 = sio.loadmat("/home/SharedData/fabio/cgan/hmdb_i3d/split_1/att_splits.mat")
+    # sftp://bbanerjee@10.107.35.16/home/SharedData/fabio/zsl_cgan/semantic_data/ucf101_i3d/split_1/att_splits.mat
+    split_1 = sio.loadmat("/home/SharedData/fabio/zsl_cgan/semantic_data/ucf101_i3d/split_1/att_splits.mat")
     for i in split_1:
         print(i)
     print("----------")
