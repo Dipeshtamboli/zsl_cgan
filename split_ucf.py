@@ -45,7 +45,7 @@ def check_split():
 def create_all_vid_list_from_split(label_dict,trainval_loc,test_seen_loc,test_unseen_loc):
 	all_vid = []
 	count = 1
-	with open("splitted.csv",'w') as f:
+	with open("csv_vid_locn_split.csv",'w') as f:
 		for (dirs,a,b) in os.walk('/home/SharedData/fabio/data/UCF-101/16_frames_split/train'): 
 			# print("count:",count)
 			print (dirs )
