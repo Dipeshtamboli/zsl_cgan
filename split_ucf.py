@@ -6,7 +6,9 @@ import os
 import scipy.io as sio
 import shutil
 import pprint as p
-
+# train-5372
+# unseen - 6606
+# seen test -1342
 def cout(anything):
 	p.pprint(anything)
 

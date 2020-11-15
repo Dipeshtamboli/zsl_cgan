@@ -1,2 +1,5 @@
+*.pth.tar
+*.pth
+*.tar
 ucf_split1/*
 semantic_data/*
