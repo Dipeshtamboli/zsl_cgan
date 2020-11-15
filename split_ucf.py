@@ -75,7 +75,39 @@ def create_all_vid_list_from_split(label_dict,trainval_loc,test_seen_loc,test_un
 	#   print(i)
 	# print(all_vid)
 
+def copy_trainval_testseen_unseen_split_data(csv_path):
+    with open(csv_path, newline='') as csvfile:
+        spamreader = csv.reader(csvfile, delimiter=',')
+        for r in spamreader:
+            index=int(r[0].split(',')[0])
+            dir_add=r[0].split(',')[1]
+            label = r[0].split(',')[2]
+            split_loc = r[0].split(',')[4]
+            # print("index: ",index)
+            print("dir_add: ",dir_add)
+            print("split_loc: ",split_loc)
+            # print("label: ",label)
+            # print("--------------------------------------")
+            # pdb.set_trace()
+            main_dir = "/home/SharedData/fabio/zsl_cgan/ucf_split1/"
+            if index in trainval_loc[:,0]:
+                print(index, split_loc, label)
+                print("trainval_loc")
+                dest = main_dir + "trainval/"+label+'/'+dir_add.split('/')[-1]
+                destination = shutil.copytree(dir_add, dest)
+            elif index in test_seen_loc[:,0]:
+                print(index, split_loc, label)
+                print("test_seen_loc")
+                dest = main_dir + "test_seen/"+label+'/'+dir_add.split('/')[-1]
+                destination = shutil.copytree(dir_add, dest)
+            elif index in test_unseen_loc[:,0]:
+                print(index, split_loc, label)
+                print("test_unseen_loc")
+                dest = main_dir + "test_unseen/"+label+'/'+dir_add.split('/')[-1]
+                destination = shutil.copytree(dir_add, dest)            
+        # print(spamreader)
 if __name__ == '__main__':
 	dict_id_to_label = load_labels_jason_file()
 	trainval_loc,test_seen_loc,test_unseen_loc = check_split()
-	create_all_vid_list_from_split(dict_id_to_label,trainval_loc,test_seen_loc,test_unseen_loc)
+	# create_all_vid_list_from_split(dict_id_to_label,trainval_loc,test_seen_loc,test_unseen_loc)
+	copy_trainval_testseen_unseen_split_data("csv_vid_locn_split.csv")
