@@ -55,7 +55,6 @@ def create_all_vid_list_from_split(label_dict,trainval_loc,test_seen_loc,test_un
 			if len(dirs.split("/")) ==10:
 				all_vid.append(dirs)
 				writer = csv.writer(f, dialect='excel')
-				writer.writerow([str(count)+","+ dirs+","+ dirs.split('/')[-2]+','+str(label_dict[dirs.split('/')[-2]])])
 				location = ''
 				if count in trainval_loc:
 					location += "trainval"
@@ -63,6 +62,7 @@ def create_all_vid_list_from_split(label_dict,trainval_loc,test_seen_loc,test_un
 					location += "test_seen"
 				if count in test_unseen_loc:
 					location += "test_unseen"            		
+				writer.writerow([str(count)+","+ dirs+","+ dirs.split('/')[-2]+','+str(label_dict[dirs.split('/')[-2]]) + ',' + location])
 				print(str(count)+','+ dirs+","+ dirs.split('/')[-2]+','+str(label_dict[dirs.split('/')[-2]]) + ',' + location)
 				count +=1
 			# if len(all_vid) > 2:
