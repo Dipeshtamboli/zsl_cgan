@@ -130,6 +130,30 @@ class ConvLSTM(nn.Module):
         else:
             x = x[:, -1]
         return self.output_layers(x), x
+
+
+##############################
+#  Visual Features Fully Connected
+##############################
+class Visual_FC(nn.Module):
+    def __init__(self):
+        super(Visual_FC, self).__init__()
+        # resnet = resnet152(pretrained=True)
+        # self.feature_extractor = nn.Sequential(*list(resnet.children())[:-1])
+        self.final_out = nn.Sequential(
+            nn.Linear(2048, 1024), 
+            nn.BatchNorm1d(1024, momentum=0.01),
+            nn.ReLU(),
+            nn.Linear(1024, 512), 
+            nn.BatchNorm1d(512, momentum=0.01),
+            nn.ReLU(),
+            nn.Linear(512, 256), 
+        )
+
+    def forward(self, x):
+        x = self.final_out(x)
+        x = x.view(x.size(0), -1)
+        return (x)
 ##############################
 #  Semantic Fully Connected
 ##############################
@@ -143,6 +167,26 @@ class Semantic_FC(nn.Module):
             nn.BatchNorm1d(256, momentum=0.01),
             nn.ReLU(),
             nn.Linear(256, 128), 
+        )
+
+    def forward(self, x):
+        x = self.final_out(x)
+        x = x.view(x.size(0), -1)
+        return (x)
+
+##############################
+#  Semantic+Graph Fully Connected
+##############################
+class Semantic_and_Graph_FC(nn.Module):
+    def __init__(self):
+        super(Semantic_and_Graph_FC, self).__init__()
+        # resnet = resnet152(pretrained=True)
+        # self.feature_extractor = nn.Sequential(*list(resnet.children())[:-1])
+        self.final_out = nn.Sequential(
+            nn.Linear(256, 128), 
+            nn.BatchNorm1d(128, momentum=0.01),
+            nn.ReLU(),
+            nn.Linear(128, 256), 
         )
 
     def forward(self, x):
