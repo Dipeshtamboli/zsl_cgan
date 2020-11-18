@@ -60,10 +60,12 @@ model = ConvLSTM(
 model = model.to(device)
 # /home/SharedData/fabio/c3d_codes/run/LSTM_part2/Bi-LSTM-ucf101_epoch-199.pth.tar
 # /home/SharedData/fabio/zsl_cgan/seen51_training/run/bi-lstm_seen51_training/Bi-LSTM-ucf101_epoch-199.pth.tar
+# /home/SharedData/fabio/zsl_cgan/seen51_training/run/LSTM_part2/Bi-LSTM-ucf101_epoch-199.pth.tar
 load_epoch = 199
-pdb.set_trace()
-checkpoint = torch.load(os.path.join(save_dir, saveName + '_epoch-' + f"{load_epoch}" + '.pth.tar'),
-               map_location=lambda storage, loc: storage)   # Load all tensors onto the CPU
+# checkpoint = torch.load(os.path.join(save_dir, saveName + '_epoch-' + f"{load_epoch}" + '.pth.tar'),
+#                map_location=lambda storage, loc: storage)   # Load all tensors onto the CPU
+load_Path = "/home/SharedData/fabio/zsl_cgan/seen51_training/run/bi-lstm_seen51_training/Bi-LSTM-ucf101_epoch-199.pth.tar"
+checkpoint = torch.load(load_Path, map_location=lambda storage, loc: storage)   # Load all tensors onto the CPU
 
 print("Initializing weights from: {}...".format(
     os.path.join(save_dir, 'models', saveName + '_epoch-' + str(resume_epoch - 1) + '.pth.tar')))
@@ -71,12 +73,13 @@ print("Initializing weights from: {}...".format(
 model.load_state_dict(checkpoint['state_dict'])
 # optimizer.load_state_dict(checkpoint['opt_dict'])
 print('Training model on {} dataset...'.format(dataset))
-all_dataloader = DataLoader(VideoDataset(dataset=dataset, all_data=True, split='train',clip_len=16), batch_size=100, shuffle=False, num_workers=4)
-# train_dataloader = DataLoader(VideoDataset(dataset=dataset, split='train',clip_len=16), batch_size=100, shuffle=True, num_workers=4)
-# val_dataloader   = DataLoader(VideoDataset(dataset=dataset, split='val',  clip_len=16), batch_size=100, num_workers=4)
-# test_dataloader  = DataLoader(VideoDataset(dataset=dataset, split='test', clip_len=16), batch_size=100, num_workers=4)
+# pdb.set_trace()
 
-# exit()
+train_dataloader = DataLoader(VideoDataset(dataset=dataset, split='train',clip_len=16), batch_size=100, shuffle=False, num_workers=4)
+# all_dataloader = DataLoader(VideoDataset(dataset=dataset, all_data=True, split='train',clip_len=16), batch_size=100, shuffle=False, num_workers=4)
+all_dataloader = train_dataloader
+
+
 model.eval()
 lab_list = []
 pred_list = []
