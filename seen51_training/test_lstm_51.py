@@ -75,7 +75,7 @@ model.load_state_dict(checkpoint['state_dict'])
 print('Training model on {} dataset...'.format(dataset))
 # pdb.set_trace()
 
-train_dataloader = DataLoader(VideoDataset(dataset=dataset, split='train',clip_len=16), batch_size=100, shuffle=False, num_workers=4)
+train_dataloader = DataLoader(VideoDataset(dataset=dataset, split='test_unseen',clip_len=16), batch_size=100, shuffle=False, num_workers=4)
 # all_dataloader = DataLoader(VideoDataset(dataset=dataset, all_data=True, split='train',clip_len=16), batch_size=100, shuffle=False, num_workers=4)
 all_dataloader = train_dataloader
 
@@ -126,5 +126,5 @@ epoch_acc = running_corrects.double() / len(all_dataloader)
 print("Acc: {}".format(epoch_acc))
 # stop_time = timeit.default_timer()
 # print("Execution time: " + str(stop_time - start_time) + "\n")
-np.save(f"lstm_feats_51_classes_2048d.npy", lstm_feats[1:])
+np.save(f"lstm_feats_50_unseen_classes_2048d.npy", lstm_feats[1:])
 print("total_time_taken:",int(-(std_start_time - time.time())/3600)," hrs  ", int(-(std_start_time - time.time())/60%60), " mins")

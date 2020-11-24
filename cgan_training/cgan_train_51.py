@@ -26,7 +26,7 @@ n_epochs = 400
 b1=0.5
 b2=0.999
 # n_classes = 25+16+10
-n_classes = 51
+n_classes = 51 + 10
 use_pretrained = False
 final_total_class = 101
 latent_dim = 300+100
@@ -130,6 +130,7 @@ att = torch.tensor(att).cuda()
 # # lstm_feats = np.load("data/lstm_feats_0-24_classes_2696x2049d.npy") #features of first 25 classes
 # lstm_feats = np.load("data/lstm_feats_41-50_classes_2696x2049d.npy") #features of first 25 classes
 # lstm_feats = np.concatenate((gen_feats, lstm_feats))
+
 lstm_feats = np.load("../npy_files/lstm_feats_51_classes_2048d.npy")
 lstm_features = torch.tensor(lstm_feats[:,:-1])
 lstm_labels = torch.tensor(lstm_feats[:,-1])

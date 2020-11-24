@@ -25,7 +25,7 @@ from gcn_model import GCN
 
 start_time = time()
 parser = argparse.ArgumentParser(description='Video action recogniton using GCN and semantics')
-parser.add_argument('--logfile_name', type=str, default="gcn_vis",
+parser.add_argument('--logfile_name', type=str, default="gcn_vis_10",
                     help='file name for storing the log file')
 parser.add_argument('--gpu', type=int, default=3,
                     help='GPU ID, start from 0')
@@ -34,7 +34,10 @@ args = parser.parse_args()
 num_epochs = 50
 b1=0.5
 b2=0.999
-n_classes = 51
+seen_cls = 51
+unseen_cls = 10
+n_classes = seen_cls + unseen_cls
+
 save_epoch = 10
 # final_total_class = 51
 latent_dim = 300+100
@@ -55,37 +58,34 @@ save_dir_root = current_dir
 save_dir = os.path.join(save_dir_root, log_name)
 modelName = 'GCN-SEM-VIS' # Options: C3D or R2Plus1D or R3D
 saveName = modelName
-# sftp://bbanerjee@10.107.35.16/home/SharedData/fabio/zsl_cgan/cgan_training/seen_semantic_51.npy
-att = np.load("../cgan_training/seen_semantic_51.npy")
-att = torch.tensor(att).cuda()
 
+unseen_att = np.load("../cgan_training/unseen_semantic_50.npy")[:unseen_cls]
+att = np.load("../cgan_training/seen_semantic_51.npy")
+att = np.concatenate((att,unseen_att),0)
+att = torch.tensor(att).cuda()
 att = att.type(torch.FloatTensor).cuda()
+
 cls_criterion = nn.CrossEntropyLoss().to(device)
-# cls_criterion.to(device)
 triplet_loss = nn.TripletMarginLoss(margin=1.0, p=2).to(device)
+# cls_criterion.to(device)
 # model.to(device)
 # train_dataloader = DataLoader(VideoDataset(dataset='ucf101', all_data=True, split='train',clip_len=16), batch_size=100, shuffle=True, num_workers=4)
 
 
 
-gcn_model = GCN(nfeat=att.shape[1],
-            nhid=128,
-            nclass=n_classes,
-            dropout=0.5).cuda()
 
 cos = torch.nn.CosineSimilarity(dim=1, eps=1e-6)
 adj = torch.zeros((n_classes,n_classes)).cuda()
 for i in range(n_classes):
     for j in range(n_classes):
         adj[i][j] = cos(att[i].unsqueeze(0),att[j].unsqueeze(0))
-# model = ConvLSTM(
-#     num_classes=n_classes,
-#     latent_dim=512,
-#     lstm_layers=1,
-#     hidden_dim=1024,
-#     bidirectional=True,
-#     attention=True,
-# )    
+
+gcn_model = GCN(nfeat=att.shape[1],
+            nhid=128,
+            nclass=n_classes,
+            dropout=0.5).cuda()
+gcn_model.to('cuda')
+
 visual_model = Visual_FC()
 visual_model.to('cuda')
 
@@ -106,7 +106,7 @@ print('sem_graph_model: Total params: %.2fK' % (sum(p.numel() for p in sem_graph
 optimizer = torch.optim.Adam(list(visual_model.parameters())+list(sem_graph_model.parameters())+list(sem_model.parameters())+list(gcn_model.parameters())+list(classifier.parameters()), lr=1e-5)
 
 # /home/SharedData/fabio/zsl_cgan/cgan_training/gn_feats/classes_51_generated.npy
-lstm_feats = np.load("../cgan_training/gn_feats/classes_51_generated.npy")
+lstm_feats = np.load("../cgan_training/gn_feats/classes_51_add_10_generated.npy")
 lstm_features = torch.tensor(lstm_feats[:,:-1])
 lstm_labels = torch.tensor(lstm_feats[:,-1])
 train_true = data_utils.TensorDataset(lstm_features, lstm_labels)
@@ -211,13 +211,16 @@ for epoch in range(num_epochs):
         # stop_time = timeit.default_timer()
         # print("Execution time: " + str(stop_time - start_time) + "\n")
     save_path = os.path.join(save_dir, saveName + '_epoch-' + str(epoch) + '.pth.tar')
-    # pdb.set_trace()
     if epoch % save_epoch == (save_epoch - 1):
         torch.save({
             'epoch': epoch + 1,
-            'state_dict': visual_model.state_dict(),
+            'visual_state_dict': visual_model.state_dict(),
+            'sem_graph_state_dict': sem_graph_model.state_dict(),
+            'sem_state_dict': sem_model.state_dict(),
+            'gcn_state_dict': gcn_model.state_dict(),
+            'classifier_state_dict': classifier.state_dict(),
             'opt_dict': optimizer.state_dict(),
-        }, os.path.join(save_dir, saveName + '_epoch-' + str(epoch) + '.pth.tar'))
+        }, save_path)
         print("Save model at {}\n".format(save_path))
 
 print(f'Execution time: {(time()- start_time)//3600} hrs \

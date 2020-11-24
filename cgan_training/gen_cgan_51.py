@@ -21,6 +21,7 @@ n_epochs = 200
 b1=0.5
 b2=0.999
 n_classes = 51
+unseen_cls = 10
 final_total_class = 101
 latent_dim = 300+100
 lr = 1e-3
@@ -65,7 +66,9 @@ generator.load_state_dict(checkpoint['gen_state_dict'])
 
 generator.cuda()
 
+unseen_att = np.load("unseen_semantic_50.npy")[:unseen_cls]
 att = np.load("seen_semantic_51.npy")
+att = np.concatenate((att,unseen_att),0)
 att = torch.tensor(att).cuda()
 
 # split_1 = sio.loadmat("/home/SharedData/fabio/cgan/hmdb_i3d/split_1/att_splits.mat")
@@ -76,10 +79,10 @@ att = torch.tensor(att).cuda()
 
 LongTensor = torch.cuda.LongTensor if cuda else torch.LongTensor
 FloatTensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
-batch_size = n_classes
+# batch_size = n_classes
 
 # gen_labels = Variable(LongTensor(np.random.randint(0, n_classes, batch_size)))
-gen_labels = Variable(LongTensor(np.arange(n_classes)))
+gen_labels = Variable(LongTensor(np.arange(n_classes+ unseen_cls)))
 gen_labels = torch.cat(100*[gen_labels])
 z = Variable(FloatTensor(np.random.normal(0, 1, (len(gen_labels), latent_dim))))
 z[:,:300] = (att[gen_labels])
@@ -88,4 +91,4 @@ z[:,:300] = (att[gen_labels])
 gen_imgs = generator(z, gen_labels)
 # pdb.set_trace()
 gen_feats_labs = torch.cat((gen_imgs,gen_labels.type(torch.cuda.FloatTensor).unsqueeze(1)), dim =1)
-np.save("classes_51_generated.npy", gen_feats_labs.cpu().detach().numpy())
+np.save("classes_51_add_10_generated.npy", gen_feats_labs.cpu().detach().numpy())
