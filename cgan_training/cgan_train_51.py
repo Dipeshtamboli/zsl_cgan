@@ -126,14 +126,13 @@ LongTensor = torch.cuda.LongTensor if cuda else torch.LongTensor
 att = np.load("seen_semantic_51.npy")
 att = torch.tensor(att).cuda()
 # pdb.set_trace()
-lstm_feats = np.load("../npy_files/lstm_feats_51_classes_2048d.npy")
 # gen_feats = np.load("data/gen_feats_0-24+25-40(2).npy") #features of first 25 classes
 # # lstm_feats = np.load("data/lstm_feats_0-24_classes_2696x2049d.npy") #features of first 25 classes
 # lstm_feats = np.load("data/lstm_feats_41-50_classes_2696x2049d.npy") #features of first 25 classes
 # lstm_feats = np.concatenate((gen_feats, lstm_feats))
+lstm_feats = np.load("../npy_files/lstm_feats_51_classes_2048d.npy")
 lstm_features = torch.tensor(lstm_feats[:,:-1])
 lstm_labels = torch.tensor(lstm_feats[:,-1])
-
 train_true = data_utils.TensorDataset(lstm_features, lstm_labels)
 dataloader = data_utils.DataLoader(train_true, batch_size=100, shuffle=True)
 
