@@ -112,6 +112,12 @@ lstm_labels = torch.tensor(lstm_feats[:,-1])
 train_true = data_utils.TensorDataset(lstm_features, lstm_labels)
 train_dataloader = data_utils.DataLoader(train_true, batch_size=100, shuffle=True)
 
+# lstm_feats = np.load("../cgan_training/gn_feats/classes_51_add_10_generated.npy")
+# lstm_features = torch.tensor(lstm_feats[:,:-1])
+# lstm_labels = torch.tensor(lstm_feats[:,-1])
+# train_true = data_utils.TensorDataset(lstm_features, lstm_labels)
+# train_dataloader = data_utils.DataLoader(train_true, batch_size=100, shuffle=True)
+
 trainval_loaders = {'train': train_dataloader}
 trainval_sizes = {x: len(trainval_loaders[x].dataset) for x in ['train']}
 # exit()
