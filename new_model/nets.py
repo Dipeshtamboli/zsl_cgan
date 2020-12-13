@@ -181,7 +181,7 @@ class Discriminator(nn.Module):
             nn.Linear(512, 1),
         )
 
-    def forward(self, img, labels):
+    def forward(self, img):
         # Concatenate label embedding and image to produce input
         # d_in = torch.cat((img.view(img.size(0), -1), self.label_embedding(labels)), -1)
         d_in = img.view(img.size(0), -1)

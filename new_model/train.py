@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 from torch.autograd import Variable
 import requests
 from old_16_frames import VideoDataset
-from lstm_models import *
+from nets import *
 
 def send_dipesh(send_string):
 #    chatwork.send_message(log_id, send_string)
@@ -50,13 +50,14 @@ std_start_time = time.time()
 # latent_dim = 300+100
 b1=0.5
 b2=0.999
+batch_size = 100
 semantic_dim = 300
 noise_dim = 100
 input_dim = 2048
 nEpochs = 200  # Number of epochs for training
 resume_epoch = 0  # Default is 0, change if want to resume
 useTest = True # See evolution of the test set when training
-nTestInterval = 20 # Run on test set every nTestInterval epochs
+nTestInterval = 10 # Run on test set every nTestInterval epochs
 snapshot = 50 # Store a model every snapshot epochs
 lr = 1e-3 # Learning rate
 
@@ -95,7 +96,7 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, lr=
 
     optimizer_G = torch.optim.Adam(generator.parameters(), lr=lr, betas=(b1, b2))
     optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=lr, betas=(b1, b2))
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-5)
+    optimizer = torch.optim.Adam(list(model.parameters())+list(classifier.parameters()), lr=lr)
 
     if cuda:
         model = model.to(device)
@@ -105,9 +106,6 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, lr=
 
     cls_criterion = nn.CrossEntropyLoss().to(device)
     adversarial_loss = torch.nn.MSELoss().to(device)
-    # criterion = nn.CrossEntropyLoss()  # standard crossentropy loss for classification
-    # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10,
-    #                                       gamma=0.1)  # the scheduler divides the lr by 10 every 10 epochs
 
     if resume_epoch == 0:
         print("Training {} from scratch...".format(modelName))
@@ -120,16 +118,13 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, lr=
         optimizer.load_state_dict(checkpoint['opt_dict'])
 
     print('Total params: %.2fM' % (sum(p.numel() for p in model.parameters()) / 1000000.0))
-    model.to(device)
-    cls_criterion.to(device)
 
-    # log_dir = os.path.join(save_dir, 'models',exp_name ,datetime.now().strftime('%b%d_%H-%M-%S') + '_' + socket.gethostname())
     log_dir = os.path.join(save_dir)
     writer = SummaryWriter(log_dir=log_dir)
 
     print('Training model on {} dataset...'.format(dataset))
-    train_dataloader = DataLoader(VideoDataset(dataset=dataset, split='train',clip_len=16), batch_size=100, shuffle=True, num_workers=4)
-    val_dataloader   = DataLoader(VideoDataset(dataset=dataset, split='test_seen',  clip_len=16), batch_size=100, num_workers=4)
+    train_dataloader = DataLoader(VideoDataset(dataset=dataset, split='data_1_train',clip_len=16), batch_size=batch_size, shuffle=True, num_workers=4)
+    val_dataloader   = DataLoader(VideoDataset(dataset=dataset, split='data_1_test',  clip_len=16), batch_size=batch_size, num_workers=4)
     # test_dataloader  = DataLoader(VideoDataset(dataset=dataset, split='test', clip_len=16), batch_size=100, num_workers=4)
     test_dataloader = val_dataloader
 
@@ -140,133 +135,188 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, lr=
     lab_list = []
     pred_list = []
 
+    att = np.load("../npy_files/seen_semantic_51.npy")
+    att = torch.tensor(att).cuda()    
+
     for epoch in range(resume_epoch, num_epochs):
         # each epoch has a training and validation step
-        for phase in ['train', 'val']:
-            start_time = timeit.default_timer()
+        # for phase in ['train', 'val']:
+        start_time = timeit.default_timer()
 
             # reset the running loss and corrects
-            running_loss = 0.0
-            running_corrects = 0.0
+        running_loss = 0.0
+        running_corrects = 0.0
 
             # set model to train() or eval() mode depending on whether it is trained
             # or being validated. Primarily affects layers such as BatchNorm or Dropout.
-            if phase == 'train':
+            # if phase == 'train':
                 # scheduler.step() is to be called once every epoch during training
                 # scheduler.step()
-                model.train()
-            else:
-                model.eval()
+        model.train()
+        classifier.train()
+        generator.train()
+        discriminator.train()
+            # else:
+            #     model.eval()
 
-            for inputs, labels in (trainval_loaders[phase]):
-                # move inputs and labels to the device the training is taking place on
+        for inputs, labels in (trainval_loaders["train"]):
+            inputs = inputs.permute(0,2,1,3,4)
+            image_sequences = Variable(inputs.to(device), requires_grad=True)
+            labels = Variable(labels.to(device), requires_grad=False)                
+
+            optimizer.zero_grad()
+            model.lstm.reset_hidden_state()
+            loop_batch_size = len(inputs)
+
+            valid = Variable(FloatTensor(loop_batch_size, 1).fill_(1.0), requires_grad=False)
+            fake = Variable(FloatTensor(loop_batch_size, 1).fill_(0.0), requires_grad=False)
+
+            optimizer_G.zero_grad()
+            noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim))))
+            gen_labels = Variable(LongTensor(np.random.randint(0, num_classes, loop_batch_size)))
+            semantic = att[gen_labels]
+
+            true_features_2048 = model(image_sequences)
+            real_imgs = Variable(true_features_2048.type(FloatTensor))
+            predictions = classifier(true_features_2048)
+            gen_imgs = generator(semantic.float(), noise)
+            generated_preds = classifier(gen_imgs)
+
+            validity = discriminator(gen_imgs)
+            g_loss = adversarial_loss(validity, valid)
+            g_loss.backward(retain_graph=True)
+            # g_loss.backward()
+            # for name, param in generator.named_parameters():
+            #     if param.grad is not None:
+            #         print(name, param.grad.sum())
+            #     else:
+            #         print(name, param.grad)
+
+            optimizer_G.step()                
+
+            optimizer_D.zero_grad()
+
+            validity_real = discriminator(true_features_2048)
+            d_real_loss = adversarial_loss(validity_real, valid)
+            validity_fake = discriminator(gen_imgs.detach())
+            d_fake_loss = adversarial_loss(validity_fake, fake)
+            d_loss = (d_real_loss + d_fake_loss) / 2
+            d_loss.backward(retain_graph=True)
+            # d_loss.backward()
+            
+            optimizer_D.step()
+
+            cls_loss = cls_criterion(predictions, labels)
+            gen_multiclass_CEL = cls_criterion(generated_preds, gen_labels)
+            loss =  cls_loss  + gen_multiclass_CEL
+            acc = 100 * (predictions.detach().argmax(1) == labels).cpu().numpy().mean()
+            probs = nn.Softmax(dim=1)(predictions)
+            preds = torch.max(probs, 1)[1]
+            lab_list += labels.cpu().numpy().tolist()
+            pred_list += preds.cpu().numpy().tolist()
+            
+            loss.backward()
+            # for name, param in generator.named_parameters():
+            #     if param.grad is not None:
+            #         print(name, param.grad.sum())
+            #     else:
+            #         print(name, param.grad)
+
+            # for name, param in (list(classifier.named_parameters())+list(model.named_parameters())):
+            #     if param.grad is not None:
+            #         print(name, param.grad.sum())
+            #     else:
+            #         print(name, param.grad)
+            
+            optimizer.step()
+            # for name, param in generator.named_parameters():
+            #     if param.grad is not None:
+            #         print(name, param.grad.sum())
+            #     else:
+            #         print(name, param.grad)
+
+            # exit()
+            running_loss += loss.item() * inputs.size(0)
+            running_corrects += torch.sum(preds == labels.data)
+
+        conf_mat = confusion_matrix(lab_list, pred_list)
+        epoch_loss = running_loss / trainval_sizes["train"]
+        epoch_acc = running_corrects.double() / trainval_sizes["train"]
+
+        writer.add_scalar('data/train_loss_epoch', epoch_loss, epoch)
+        writer.add_scalar('data/train_acc_epoch', epoch_acc, epoch)
+
+        print("[{}] Epoch: {}/{} Loss: {} Acc: {}".format("train", epoch+1, nEpochs, epoch_loss, epoch_acc))
+        stop_time = timeit.default_timer()
+        print("Execution time: " + str(stop_time - start_time) + "\n")
+
+        # Validation loop
+
+        if useTest and epoch % test_interval == (test_interval - 1):
+        # if True:
+            model.eval()
+            classifier.eval()
+            generator.eval()
+            discriminator.eval()            
+            start_time = timeit.default_timer()
+
+            running_loss = 0.0
+            running_corrects = 0.0
+            gen_run_corrects = 0.0
+
+            for inputs, labels in (test_dataloader):
+                # print(inputs.shape)
                 inputs = inputs.permute(0,2,1,3,4)
-                image_sequences = Variable(inputs.to(device), requires_grad=True)
+                image_sequences = Variable(inputs.to(device), requires_grad=False)
                 labels = Variable(labels.to(device), requires_grad=False)                
+                loop_batch_size = len(inputs)
+                noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim))))
+                gen_labels = Variable(LongTensor(np.random.randint(0, num_classes, loop_batch_size)))
+                semantic = att[gen_labels]
 
-                # inputs = Variable(inputs, requires_grad=True).to(device)
-                # labels = Variable(labels).to(device)
-                optimizer.zero_grad()
-                model.lstm.reset_hidden_state()
-
-                valid = Variable(FloatTensor(batch_size, 1).fill_(1.0), requires_grad=False)
-                fake = Variable(FloatTensor(batch_size, 1).fill_(0.0), requires_grad=False)
-
-                # Configure input
-                real_imgs = Variable(imgs.type(FloatTensor))
-                labels = Variable(labels.type(LongTensor))
-
-                # -----------------
-                #  Train Generator
-                # -----------------
-
-                optimizer_G.zero_grad()
-
-                if phase == 'train':
-                    # pdb.set_trace()
+                with torch.no_grad():
+                    model.lstm.reset_hidden_state()
+                    # outputs, lstm_out = model(image_sequences)
                     true_features_2048 = model(image_sequences)
-                    logits = classifier(true_features_2048)
-                else:
-                    with torch.no_grad():
-                        predictions, lstm_out = model(image_sequences)
+                    probs = classifier(true_features_2048)
 
-                # loss = criterion(outputs, labels)
-                loss = cls_criterion(predictions, labels)
-                acc = 100 * (predictions.detach().argmax(1) == labels).cpu().numpy().mean()
-                probs = nn.Softmax(dim=1)(predictions)
+                    gen_imgs = generator(semantic.float(), noise)
+                    generated_probs = classifier(gen_imgs)                    
+                    # predictions = model(image_sequences)
+                
                 preds = torch.max(probs, 1)[1]
-                # pdb.set_trace()
 
-                lab_list += labels.cpu().numpy().tolist()
-                pred_list += preds.cpu().numpy().tolist()
-                if phase == 'train':
-                    loss.backward()
-                    optimizer.step()
+                generated_preds = torch.max(generated_probs, 1)[1]
 
                 running_loss += loss.item() * inputs.size(0)
                 running_corrects += torch.sum(preds == labels.data)
+                gen_run_corrects += torch.sum(generated_preds == gen_labels.data)
 
-            conf_mat = confusion_matrix(lab_list, pred_list)
-            # np.save("{}.npy".format(os.path.join(save_dir, saveName + '_epoch-' + str(epoch))+'_'+ phase), conf_mat)
-            # fig = plt.figure()
-            # plt.imshow(conf_mat)
-            # writer.add_figure('conf_mat_'+phase, fig, epoch)
-            epoch_loss = running_loss / trainval_sizes[phase]
-            epoch_acc = running_corrects.double() / trainval_sizes[phase]
 
-            if phase == 'train':
-                writer.add_scalar('data/train_loss_epoch', epoch_loss, epoch)
-                writer.add_scalar('data/train_acc_epoch', epoch_acc, epoch)
-            else:
-                writer.add_scalar('data/val_loss_epoch', epoch_loss, epoch)
-                writer.add_scalar('data/val_acc_epoch', epoch_acc, epoch)
+            real_epoch_acc = running_corrects.double() / test_size
+            gen_epoch_acc = gen_run_corrects.double() / test_size
 
-            print("[{}] Epoch: {}/{} Loss: {} Acc: {}".format(phase, epoch+1, nEpochs, epoch_loss, epoch_acc))
+            # writer.add_scalar('data/test_loss_epoch', epoch_loss, epoch)
+            writer.add_scalar('data/test_acc_epoch', epoch_acc, epoch)
+            writer.add_scalar('data/gen_test_acc_epoch', gen_epoch_acc, epoch)
+
+            print("[test] Epoch: {}/{} Gen_Acc: {} Acc: {}".format(epoch+1, nEpochs, gen_epoch_acc, real_epoch_acc))
             stop_time = timeit.default_timer()
             print("Execution time: " + str(stop_time - start_time) + "\n")
 
+        save_path = os.path.join(save_dir, saveName + '_epoch-' + str(epoch) + '.pth.tar')
         if epoch % save_epoch == (save_epoch - 1):
             torch.save({
                 'epoch': epoch + 1,
-                'state_dict': model.state_dict(),
+                'extractor_state_dict': model.state_dict(),
+                'generator_state_dict': generator.state_dict(),
+                'discriminator_state_dict': discriminator.state_dict(),
+                'classifier_state_dict': classifier.state_dict(),
                 'opt_dict': optimizer.state_dict(),
-            }, os.path.join(save_dir, saveName + '_epoch-' + str(epoch) + '.pth.tar'))
-            print("Save model at {}\n".format(os.path.join(save_dir, saveName + '_epoch-' + str(epoch) + '.pth.tar')))
+            }, save_path)
+            print("Save model at {}\n".format(save_path))
 
-        # if useTest and epoch % test_interval == (test_interval - 1):
-        #     model.eval()
-        #     start_time = timeit.default_timer()
-
-        #     running_loss = 0.0
-        #     running_corrects = 0.0
-
-        #     for inputs, labels in (test_dataloader):
-        #         # print(inputs.shape)
-        #         inputs = inputs.permute(0,2,1,3,4)
-        #         image_sequences = Variable(inputs.to(device), requires_grad=False)
-        #         labels = Variable(labels.to(device), requires_grad=False)                
-
-        #         with torch.no_grad():
-        #             model.lstm.reset_hidden_state()
-        #             outputs, lstm_out = model(image_sequences)
-        #             # predictions = model(image_sequences)
-        #         probs = nn.Softmax(dim=1)(outputs)
-        #         preds = torch.max(probs, 1)[1]
-        #         loss = cls_criterion(outputs, labels)
-
-        #         running_loss += loss.item() * inputs.size(0)
-        #         running_corrects += torch.sum(preds == labels.data)
-
-        #     epoch_loss = running_loss / test_size
-        #     epoch_acc = running_corrects.double() / test_size
-
-        #     writer.add_scalar('data/test_loss_epoch', epoch_loss, epoch)
-        #     writer.add_scalar('data/test_acc_epoch', epoch_acc, epoch)
-
-        #     print("[test] Epoch: {}/{} Loss: {} Acc: {}".format(epoch+1, nEpochs, epoch_loss, epoch_acc))
-        #     stop_time = timeit.default_timer()
-        #     print("Execution time: " + str(stop_time - start_time) + "\n")
-
+        # exit()
     writer.close()
 
 
