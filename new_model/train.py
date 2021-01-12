@@ -33,9 +33,9 @@ send_dipesh("--- UCF code started ---")
 # Use GPU if available else revert to CPU
 
 parser = argparse.ArgumentParser(description='Video action recogniton training')
-parser.add_argument('--logfile_name', type=str, default="new_model",
+parser.add_argument('--logfile_name', type=str, default="generator_w_with_sem:10",
                     help='file name for storing the log file')
-parser.add_argument('--gpu', type=int, default=2,
+parser.add_argument('--gpu', type=int, default=3,
                     help='GPU ID, start from 0')
 args = parser.parse_args()
 
@@ -55,6 +55,7 @@ semantic_dim = 300
 noise_dim = 100
 input_dim = 2048
 nEpochs = 200  # Number of epochs for training
+# nEpochs = 10  # Number of epochs for training
 resume_epoch = 0  # Default is 0, change if want to resume
 useTest = True # See evolution of the test set when training
 nTestInterval = 10 # Run on test set every nTestInterval epochs
@@ -90,9 +91,9 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, lr=
         bidirectional=True,
         attention=True,
     )
-    classifier = Classifier(num_classes = num_classes)
+    classifier = Classifier(num_classes = num_classes, semantic_dim=semantic_dim)
     generator = Generator(semantic_dim, noise_dim)
-    discriminator = Discriminator(input_dim=input_dim)
+    discriminator = Discriminator(input_dim=input_dim, semantic_dim=semantic_dim)
 
     optimizer_G = torch.optim.Adam(generator.parameters(), lr=lr, betas=(b1, b2))
     optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=lr, betas=(b1, b2))
@@ -175,14 +176,17 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, lr=
             noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim))))
             gen_labels = Variable(LongTensor(np.random.randint(0, num_classes, loop_batch_size)))
             semantic = att[gen_labels]
+            semantic_true = att[labels]
 
             true_features_2048 = model(image_sequences)
             real_imgs = Variable(true_features_2048.type(FloatTensor))
-            predictions = classifier(true_features_2048)
+            # pdb.set_trace()
+            predictions = classifier(true_features_2048, semantic_true.type(FloatTensor))
             gen_imgs = generator(semantic.float(), noise)
-            generated_preds = classifier(gen_imgs)
+            generated_preds = classifier(gen_imgs, semantic.type(FloatTensor))
 
-            validity = discriminator(gen_imgs)
+
+            validity = discriminator(gen_imgs, semantic.type(FloatTensor))
             g_loss = adversarial_loss(validity, valid)
             g_loss.backward(retain_graph=True)
             # g_loss.backward()
@@ -196,9 +200,9 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, lr=
 
             optimizer_D.zero_grad()
 
-            validity_real = discriminator(true_features_2048)
+            validity_real = discriminator(true_features_2048, semantic_true.type(FloatTensor))
             d_real_loss = adversarial_loss(validity_real, valid)
-            validity_fake = discriminator(gen_imgs.detach())
+            validity_fake = discriminator(gen_imgs.detach(), semantic.type(FloatTensor))
             d_fake_loss = adversarial_loss(validity_fake, fake)
             d_loss = (d_real_loss + d_fake_loss) / 2
             d_loss.backward(retain_graph=True)
@@ -208,6 +212,7 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, lr=
 
             cls_loss = cls_criterion(predictions, labels)
             gen_multiclass_CEL = cls_criterion(generated_preds, gen_labels)
+            # loss =  cls_loss  + 10*gen_multiclass_CEL
             loss =  cls_loss  + gen_multiclass_CEL
             acc = 100 * (predictions.detach().argmax(1) == labels).cpu().numpy().mean()
             probs = nn.Softmax(dim=1)(predictions)
@@ -273,15 +278,16 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, lr=
                 noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim))))
                 gen_labels = Variable(LongTensor(np.random.randint(0, num_classes, loop_batch_size)))
                 semantic = att[gen_labels]
+                semantic_true = att[labels]
 
                 with torch.no_grad():
                     model.lstm.reset_hidden_state()
                     # outputs, lstm_out = model(image_sequences)
                     true_features_2048 = model(image_sequences)
-                    probs = classifier(true_features_2048)
+                    probs = classifier(true_features_2048, semantic_true.type(FloatTensor))
 
                     gen_imgs = generator(semantic.float(), noise)
-                    generated_probs = classifier(gen_imgs)                    
+                    generated_probs = classifier(gen_imgs, semantic.type(FloatTensor))
                     # predictions = model(image_sequences)
                 
                 preds = torch.max(probs, 1)[1]
