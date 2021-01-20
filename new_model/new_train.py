@@ -1,3 +1,4 @@
+from copy import deepcopy
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix
@@ -19,6 +20,81 @@ import requests
 from old_16_frames import VideoDataset
 from nets import *
 
+def variable(t: torch.Tensor, use_cuda=True, **kwargs):
+    if torch.cuda.is_available() and use_cuda:
+        t = t.cuda()
+    return Variable(t, **kwargs)
+
+class EWC(object):
+    def __init__(self, convlstm, model: nn.Module, generator, dataset: list, att):
+
+        self.generator = generator
+        self.att = att
+        self.convlstm = convlstm
+        self.model = model
+        self.dataset = dataset
+
+        params = [*self.model.parameters()]
+        params[-1].requires_grad = False
+        params[-1].requires_grad = False
+        self.params = {n: p for n, p in self.model.named_parameters() if p.requires_grad}
+        self._means = {}
+        self._precision_matrices = self._diag_fisher()
+
+        for n, p in deepcopy(self.params).items():
+            self._means[n] = variable(p.data)
+
+    def _diag_fisher(self):
+        precision_matrices = {}
+        for n, p in deepcopy(self.params).items():
+            p.data.zero_()
+            precision_matrices[n] = variable(p.data)
+   
+        cls_criterion = nn.CrossEntropyLoss().cuda()
+        self.model.eval()
+        for inputs,labels in self.dataset:
+            inputs = inputs.permute(0,2,1,3,4)
+            loop_batch_size = len(inputs)
+            image_sequences = Variable(inputs.to(device), requires_grad=True)
+            labels = Variable(labels.to(device), requires_grad=False)
+            self.model.zero_grad()
+            self.convlstm.lstm.reset_hidden_state()
+            gen_labels = Variable(LongTensor(np.random.randint(0, num_classes, loop_batch_size)))
+            semantic = self.att[gen_labels]
+            semantic_true = self.att[labels]
+
+            true_features_2048 = self.convlstm(image_sequences)
+            real_imgs = Variable(true_features_2048.type(FloatTensor))
+            # pdb.set_trace()
+            predictions = self.model(true_features_2048, semantic_true.type(FloatTensor))
+            noise_dim = 100
+            noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim))))
+            gen_imgs = self.generator(semantic.float(), noise)
+            generated_preds = self.model(gen_imgs, semantic.type(FloatTensor))
+
+            cls_loss = cls_criterion(predictions, labels)
+            gen_multiclass_CEL = cls_criterion(generated_preds, gen_labels)
+            loss =  cls_loss  + gen_multiclass_CEL
+            loss.backward()
+
+            print("loss backpropagation done")
+            for n, p in self.model.named_parameters():
+                if p.requires_grad:
+                    precision_matrices[n].data += p.grad.data ** 2 / len(self.dataset)
+
+        print("precision matrices calculated") 
+        precision_matrices = {n: p for n, p in precision_matrices.items()}
+        return precision_matrices
+
+    def penalty(self):
+        loss = 0
+        for n, p in self.model.named_parameters():
+            if p.requires_grad:
+                _loss = self._precision_matrices[n] * (p - self._means[n]) ** 2
+                loss += _loss.sum()
+        return loss
+
+
 def send_dipesh(send_string):
 #    chatwork.send_message(log_id, send_string)
     headers = {
@@ -35,12 +111,16 @@ send_dipesh("--- UCF code started ---")
 parser = argparse.ArgumentParser(description='Video action recogniton training')
 parser.add_argument('--logfile_name', type=str, default="generator_w_with_sem:10",
                     help='file name for storing the log file')
+parser.add_argument('--load_name', type = str, default = None, help = 'file name for loading the log file')
 parser.add_argument('--gpu', type=int, default=3,
                     help='GPU ID, start from 0')
 parser.add_argument('--epochs', type = int, default = 200, help='number of epochs to train the model for')
 parser.add_argument('--snapshot', type = int, default = 50, help = 'model is saved after these many epochs')
 parser.add_argument('--resume_epoch', type = int, default = None, help = 'resume training from this epoch')
 parser.add_argument('--importance', type = int, default = 1000, help = 'weight given to the previous information')
+parser.add_argument('--num_classes', type = int, default = 10, help = 'number of classes in the pretrained classifier')
+parser.add_argument('--num_extra_classes', type = int, default = 0, help = 'number of extra classes to train the classifier')
+parser.add_argument('--with_ewc', type = int, default = 1, help = 'with or without EWC loss')
 args = parser.parse_args()
 
 gpu_id = str(args.gpu)
@@ -67,11 +147,13 @@ snapshot = args.snapshot # Store a model every snapshot epochs
 lr = 1e-3 # Learning rate
 
 dataset = 'ucf101' # Options: hmdb51 or ucf101
-num_classes = 10
+num_classes = args.num_classes
+extra_classes = args.num_extra_classes
 
 current_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)))
 save_dir_root = current_dir
 save_dir = os.path.join(save_dir_root, 'run', log_name)
+load_dir = os.path.join(save_dir_root, 'run', args.load_name)
 modelName = 'Bi-LSTM' # Options: C3D or R2Plus1D or R3D
 saveName = modelName + '-' + dataset
 
@@ -79,7 +161,7 @@ FloatTensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 LongTensor = torch.cuda.LongTensor if cuda else torch.LongTensor
 
 # pdb.set_trace()
-def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, lr=lr,
+def train_model(dataset=dataset, save_dir=save_dir, load_dir = load_dir, num_classes=num_classes, lr=lr,
                 num_epochs=nEpochs, save_epoch=snapshot, useTest=useTest, test_interval=nTestInterval):
     """
         Args:
@@ -99,27 +181,38 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, lr=
     generator = Generator(semantic_dim, noise_dim)
     discriminator = Discriminator(input_dim=input_dim, semantic_dim=semantic_dim)
 
-    optimizer_G = torch.optim.Adam(generator.parameters(), lr=lr, betas=(b1, b2))
-    optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=lr, betas=(b1, b2))
-    optimizer = torch.optim.Adam(list(model.parameters())+list(classifier.parameters()), lr=lr)
-
-    if cuda:
-        model = model.to(device)
-        classifier = classifier.to(device)
-        generator.cuda()
-        discriminator.cuda()
-
     cls_criterion = nn.CrossEntropyLoss().to(device)
     adversarial_loss = torch.nn.MSELoss().to(device)
 
     if args.resume_epoch is not None:
-        checkpoint = torch.load(os.path.join(save_dir, saveName + '_epoch-' + str(args.resume_epoch - 1) + '.pth.tar'),
+        checkpoint = torch.load(os.path.join(load_dir, saveName + '_epoch-' + str(args.resume_epoch - 1) + '.pth.tar'),
                        map_location=lambda storage, loc: storage)   # Load all tensors onto the CPU
         print("Initializing weights from: {}...".format(
             os.path.join(save_dir, 'models', saveName + '_epoch-' + str(resume_epoch - 1) + '.pth.tar')))
         model.load_state_dict(checkpoint['extractor_state_dict'])
-        optimizer.load_state_dict(checkpoint['opt_dict'])
         classifier.load_state_dict(checkpoint['classifier_state_dict'])
+        generator.load_state_dict(checkpoint['generator_state_dict'])
+        discriminator.load_state_dict(checkpoint['discriminator_state_dict'])
+        
+        states = classifier.state_dict()
+        w_name = [*states][-2]
+        b_name = [*states][-1]
+        last_weights = states[w_name]
+        last_biases = states[b_name]   
+        dim2 = last_weights.size(1)
+
+        if extra_classes == 0:
+            last_weights.requires_grad = False
+            last_biases.requires_grad = False
+
+        extension_weight = nn.Parameter(nn.init.normal_(torch.zeros((extra_classes, dim2), dtype = torch.float)))
+        extension_bias = nn.Parameter(nn.init.normal_(torch.zeros((extra_classes), dtype = torch.float)))
+        last_weights = torch.cat((last_weights, extension_weight), dim = 0)
+        last_biases = torch.cat((last_biases, extension_bias), dim = 0)
+        classifier.classifier_out[-2] = nn.Linear(in_features = dim2, out_features = num_classes + extra_classes, bias = True)
+        classifier.state_dict()[w_name].copy_(last_weights)
+        classifier.state_dict()[b_name].copy_(last_biases)
+        
     else:
         print("Training {} from scratch...".format(modelName))
 
@@ -147,6 +240,19 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, lr=
 
     #ewc = EWC(classifier, old_dataloader)
 
+    if cuda:
+        model = model.to(device)
+        classifier = classifier.to(device)
+        generator.cuda()
+        discriminator.cuda()
+
+    optimizer_G = torch.optim.Adam(generator.parameters(), lr=lr, betas=(b1, b2))
+    optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=lr, betas=(b1, b2))
+    optimizer = torch.optim.Adam(list(model.parameters())+list(classifier.parameters()), lr=lr)
+
+#    if args.resume_epoch is not None:
+#        optimizer.load_state_dict(checkpoint['opt_dict'])
+
     for epoch in range(resume_epoch, num_epochs):
         # each epoch has a training and validation step
         # for phase in ['train', 'val']:
@@ -169,6 +275,7 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, lr=
             #     model.eval()
 
         for inputs, labels in (trainval_loaders["train"]):
+            labels = labels + extra_classes
             inputs = inputs.permute(0,2,1,3,4)
             image_sequences = Variable(inputs.to(device), requires_grad=True)
             labels = Variable(labels.to(device), requires_grad=False)                
@@ -221,7 +328,10 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, lr=
             cls_loss = cls_criterion(predictions, labels)
             gen_multiclass_CEL = cls_criterion(generated_preds, gen_labels)
             # loss =  cls_loss  + 10*gen_multiclass_CEL
-            loss =  cls_loss  + gen_multiclass_CEL
+            if args.with_ewc == 1:
+                loss =  cls_loss  + gen_multiclass_CEL + args.importance * EWC(model, classifier, generator, old_dataloader, att).penalty()
+            else:
+                loss =  cls_loss  + gen_multiclass_CEL
             acc = 100 * (predictions.detach().argmax(1) == labels).cpu().numpy().mean()
             probs = nn.Softmax(dim=1)(predictions)
             preds = torch.max(probs, 1)[1]
@@ -318,17 +428,17 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=num_classes, lr=
             stop_time = timeit.default_timer()
             print("Execution time: " + str(stop_time - start_time) + "\n")
 
-        save_path = os.path.join(save_dir, saveName + '_epoch-' + str(epoch) + '.pth.tar')
-        if epoch % save_epoch == (save_epoch - 1):
-            torch.save({
-                'epoch': epoch + 1,
-                'extractor_state_dict': model.state_dict(),
-                'generator_state_dict': generator.state_dict(),
-                'discriminator_state_dict': discriminator.state_dict(),
-                'classifier_state_dict': classifier.state_dict(),
-                'opt_dict': optimizer.state_dict(),
-            }, save_path)
-            print("Save model at {}\n".format(save_path))
+        #save_path = os.path.join(save_dir, saveName + '_epoch-' + str(epoch) + '.pth.tar')
+        #if epoch % save_epoch == (save_epoch - 1):
+            #torch.save({
+            #    'epoch': epoch + 1,
+            #    'extractor_state_dict': model.state_dict(),
+            #    'generator_state_dict': generator.state_dict(),
+            #    'discriminator_state_dict': discriminator.state_dict(),
+            #    'classifier_state_dict': classifier.state_dict(),
+            #    'opt_dict': optimizer.state_dict(),
+            #}, save_path)
+            #print("Save model at {}\n".format(save_path))
 
         # exit()
     writer.close()
