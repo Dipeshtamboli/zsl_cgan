@@ -1,3 +1,4 @@
+*.cpython-37.pyc
 *.pyc
 *.npy
 *.pth.tar
