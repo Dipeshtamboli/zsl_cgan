@@ -259,7 +259,7 @@ class VideoDataset(Dataset):
     def crop(self, buffer, clip_len, crop_size):
         # randomly select time index for temporal jittering
         time_index = np.random.randint(buffer.shape[0] - clip_len)
-
+        #time_index = np.random.randint(buffer.shape[0])
         # Randomly select start indices in order to crop the video
         height_index = np.random.randint(buffer.shape[1] - crop_size)
         width_index = np.random.randint(buffer.shape[2] - crop_size)
@@ -270,6 +270,8 @@ class VideoDataset(Dataset):
         buffer = buffer[time_index:time_index + clip_len,
                  height_index:height_index + crop_size,
                  width_index:width_index + crop_size, :]
+
+        #buffer = buffer[time_index:, height_index:height_index + crop_size, width_index:width_index + crop_size, :]
 
         return buffer
 

@@ -12,9 +12,9 @@ class video_dataset(Dataset):
         self.classes = classes
 
         if self.train == True:
-            split = 'data_3_train'
+            split = 'train'
         else:
-            split = 'data_3_test'
+            split = 'test'
 
         self.dataset = VideoDataset(dataset='ucf101', split= split, clip_len=16)
 
@@ -74,9 +74,9 @@ class old_video_dataset(Dataset):
         self.classes = classes
 
         if self.train == True:
-            split = 'data_3_train'
+            split = 'train'
         else:
-            split = 'data_3_test'
+            split = 'test'
 
         self.dataset = VideoDataset(dataset='ucf101', split= split, clip_len=16)
 
@@ -89,7 +89,7 @@ class old_video_dataset(Dataset):
             for i in range(len(self.dataset)):
                 images, labels = self.dataset[i]
                 
-                if int(labels) in self.classes and i%10 == 0:
+                if int(labels) in self.classes and i%5 == 0:
                     if num_samples[int(labels)] > 0:
                         print(int(labels))
                         num_samples[int(labels)] = num_samples[int(labels)] - 1  

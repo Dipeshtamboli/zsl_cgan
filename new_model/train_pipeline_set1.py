@@ -50,11 +50,13 @@ b1=0.5
 b2=0.999
 batch_size = 100
 input_dim = 2048
+semantic_dim = 300
+noise_dim = 100
 nEpochs = args.epochs  # Number of epochs for training
 useTest = True # See evolution of the test set when training
 nTestInterval = args.test_interval # Run on test set every nTestInterval epochs
 snapshot = args.snapshot # Store a model every snapshot epochs
-lr = 1e-3 # Learning rate
+lr = 5e-4 # Learning rate
 
 dataset = 'ucf101' # Options: hmdb51 or ucf101
 
@@ -121,6 +123,8 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=total_classes, l
         bidirectional=True,
         attention=True,
     )
+    generator = Generator(semantic_dim, noise_dim)
+    discriminator = Discriminator(input_dim=input_dim)
     classifier = Classifier(num_classes = num_classes)
 
     print("Training {} from scratch...".format(modelName))
@@ -147,9 +151,18 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=total_classes, l
 
     if cuda:
         model = model.to(device)
+        generator = generator.to(device)
+        discriminator = discriminator.to(device)
         classifier = classifier.to(device)
 
-    optimizer = torch.optim.Adam(list(model.parameters())+list(classifier.parameters()), lr=lr)
+    optimizer_G = torch.optim.Adam(generator.parameters(), lr=lr, betas=(b1, b2))
+    optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=lr, betas=(b1, b2))
+    optimizer = torch.optim.Adam(list(model.parameters())+list(classifier.parameters()) + list(generator.parameters()), lr=lr)
+
+    adversarial_loss = torch.nn.BCELoss().to(device)    
+
+    att = np.load("../npy_files/seen_semantic_51.npy")
+    att = torch.tensor(att).cuda()    
 
     if args.train == 1:
             
@@ -158,8 +171,11 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=total_classes, l
 
             running_loss = 0.0
             running_corrects = 0.0
+            gen_running_corrects = 0.0
 
             model.train()
+            generator.train()
+            discriminator.train()
             classifier.train()
 
             for indices, inputs, labels in (trainval_loaders["train"]):
@@ -170,35 +186,75 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=total_classes, l
                 model.lstm.reset_hidden_state()
                 loop_batch_size = len(inputs)
 
+                valid = Variable(FloatTensor(loop_batch_size, 1).fill_(1.0), requires_grad=False)
+                fake = Variable(FloatTensor(loop_batch_size, 1).fill_(0.0), requires_grad=False)
+
+                noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim))))
+                gen_labels = Variable(LongTensor(np.random.randint(0, num_classes, loop_batch_size)))
+                semantic = att[gen_labels]
+                semantic_true = att[labels]
+
+                optimizer_D.zero_grad()
+
+############## All real batch training #######################
                 true_features_2048 = model(image_sequences)
-                true_features_2048 = true_features_2048.view(true_features_2048.size(0), -1)
-                logits = classifier(true_features_2048)
+                validity_real = discriminator(true_features_2048).view(-1)
+                d_real_loss = adversarial_loss(validity_real, valid)
+                d_real_loss.backward(retain_graph = True)
 
-                loss = nn.CrossEntropyLoss()(logits, labels)
+############## All Fake Batch Training #######################
+                gen_imgs = generator(semantic.float(), noise)
+                validity_fake = discriminator(gen_imgs.detach()).view(-1)
+                d_fake_loss = adversarial_loss(validity_fake, fake)
+                d_fake_loss.backward(retain_graph = True)            
+                optimizer_D.step()
 
+############## Generator training ########################
+                optimizer_G.zero_grad()
+                validity = discriminator(gen_imgs).view(-1)
+                g_loss = adversarial_loss(validity, valid)
+                g_loss.backward(retain_graph = True)
+                optimizer_G.step()                
+
+############## Model Training ###########################
                 optimizer.zero_grad()
+                generated_preds = classifier(gen_imgs)
+                predictions = classifier(true_features_2048)
+
+                loss = nn.CrossEntropyLoss()(predictions, labels)
+                gen_multiclass_CEL = nn.CrossEntropyLoss()(generated_preds, gen_labels)
+                loss =  loss  + gen_multiclass_CEL
+
                 loss.backward()
                 optimizer.step()
 
-                _, predictions = torch.max(torch.softmax(logits, dim = 1), dim = 1, keepdim = False)
+                _, predictions = torch.max(torch.softmax(predictions, dim = 1), dim = 1, keepdim = False)
+                _, gen_predictions = torch.max(torch.softmax(generated_preds, dim = 1), dim = 1, keepdim = False)
                                   
                 running_loss += loss.item() * inputs.size(0)
                 running_corrects += torch.sum(predictions == labels.data)
+                gen_running_corrects += torch.sum(gen_predictions == gen_labels.data)
 
             epoch_loss = running_loss / trainval_sizes["train"]
             epoch_acc = running_corrects.double() / trainval_sizes["train"]
+            gen_epoch_acc = gen_running_corrects.double() / trainval_sizes["train"]
 
             writer.add_scalar('data/train_acc_epoch_benchmark {}'.format(i), epoch_acc, epoch)
-            print("[test] Epoch: {}/{} Training Acc: {}".format(epoch+1, num_epochs, epoch_acc))
+            writer.add_scalar('data/gen_train_acc_epoch_benchmark {}'.format(i), gen_epoch_acc, epoch)
+
+            print("[train] Epoch: {}/{} Training Acc: {} Generator Acc: {}".format(epoch+1, num_epochs, epoch_acc, gen_epoch_acc))
 
 
             if useTest and epoch % test_interval == (test_interval - 1):
                 model.eval()
+                generator.eval()
+                discriminator.eval()
                 classifier.eval()
                 start_time = timeit.default_timer()
 
                 running_loss = 0.0
                 running_corrects = 0.0
+                gen_running_corrects = 0.0
 
                 for indices, inputs, labels in (trainval_loaders["test"]):
                     inputs = inputs.permute(0,2,1,3,4)
@@ -206,20 +262,31 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=total_classes, l
                     labels = Variable(labels.to(device), requires_grad=False)              
                     loop_batch_size = len(inputs)
 
+                    noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim))))
+                    gen_labels = Variable(LongTensor(np.random.randint(0, num_classes, loop_batch_size)))
+                    semantic = att[gen_labels]
+                    semantic_true = att[labels]
+
                     with torch.no_grad():
                         model.lstm.reset_hidden_state()
                         true_features_2048 = model(image_sequences)
                         probs = classifier(true_features_2048)
 
+                        gen_imgs = generator(semantic.float(), noise)
+                        gen_probs = classifier(gen_imgs)
 
                     _, predictions = torch.max(torch.softmax(probs, dim = 1), dim = 1, keepdim = False)
+                    _, gen_predictions = torch.max(torch.softmax(gen_probs, dim = 1), dim = 1, keepdim = False)
                     running_corrects += torch.sum(predictions == labels.data)
+                    gen_running_corrects += torch.sum(gen_predictions == gen_labels.data)
 
                 real_epoch_acc = running_corrects.double() / trainval_sizes["test"]
+                gen_epoch_acc = gen_running_corrects.double() / trainval_sizes["test"]
 
                 writer.add_scalar('data/test_acc_epoch_benchmark {}'.format(i), real_epoch_acc, epoch)
+                writer.add_scalar('data/gen_test_acc_epoch_benchmark {}'.format(i), gen_epoch_acc, epoch)
 
-                print("[test] Epoch: {}/{} Test Dataset Acc: {}".format(epoch+1, num_epochs, real_epoch_acc))
+                print("[test] Epoch: {}/{} Test Dataset Acc: {} Generator Acc: {}".format(epoch+1, num_epochs, real_epoch_acc, gen_epoch_acc))
                 stop_time = timeit.default_timer()
                 print("Execution time: " + str(stop_time - start_time) + "\n")
 
@@ -229,6 +296,8 @@ def train_model(dataset=dataset, save_dir=save_dir, num_classes=total_classes, l
                 torch.save({
                         'epoch': epoch + 1,
                         'extractor_state_dict': model.state_dict(),
+                        'generator_state_dict': generator.state_dict(),
+                        'discriminator_state_dict': discriminator.state_dict(),
                         'classifier_state_dict': classifier.state_dict(),
                         'num_classes': num_classes,
                     }, save_path)

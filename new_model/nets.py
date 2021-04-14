@@ -143,14 +143,14 @@ class Generator(nn.Module):
         return feature
 
 class Discriminator(nn.Module):
-    def __init__(self, input_dim, semantic_dim):
+    def __init__(self, input_dim):
         super(Discriminator, self).__init__()
 
         # self.label_embedding = nn.Embedding(final_total_class, final_total_class)
 
         self.model = nn.Sequential(
             # nn.Linear(final_total_class + 2048, 512),
-            nn.Linear(input_dim + semantic_dim, 512),
+            nn.Linear(input_dim, 512),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Linear(512, 512),
             nn.Dropout(0.4),
@@ -159,11 +159,12 @@ class Discriminator(nn.Module):
             nn.Dropout(0.4),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Linear(512, 1),
+            nn.Sigmoid()
         )
 
-    def forward(self, img, semantic):
+    def forward(self, img):
         # Concatenate label embedding and image to produce input
-        d_in = torch.cat((img.view(img.size(0), -1), semantic.view(semantic.size(0), -1)), -1)
+        d_in = img.view(img.size(0), -1)
         # d_in = img.view(img.size(0), -1)
         validity = self.model(d_in)
         return validity
