@@ -80,7 +80,7 @@ class Attention(nn.Module):
 ##############################
 class ConvLSTM(nn.Module):
     def __init__(
-        self, num_classes, latent_dim=512, lstm_layers=1, hidden_dim=1024, bidirectional=True, attention=True
+        self, latent_dim=512, lstm_layers=1, hidden_dim=1024, bidirectional=True, attention=True
     ):
         super(ConvLSTM, self).__init__()
         self.encoder = Encoder(latent_dim)
