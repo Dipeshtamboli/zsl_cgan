@@ -180,10 +180,10 @@ def train_model(dataset=dataset, save_dir=save_dir, load_dir = load_dir, num_cla
 
         #model1 = deepcopy(model)
         #classifier1 = deepcopy(classifier)
-        #generator1 = deepcopy(generator)
+        generator1 = deepcopy(generator)
         #discriminator1 = deepcopy(discriminator)
         #model1, classifier1, generator1, discriminator1 = model1.cuda(), classifier1.cuda(), generator1.cuda(), discriminator1.cuda()
-        #print('Copied previous model')
+        print('Copied previous model')
 
         in_features = classifier.classifier_out.in_features
         weights = classifier.classifier_out.weight.data
@@ -201,8 +201,8 @@ def train_model(dataset=dataset, save_dir=save_dir, load_dir = load_dir, num_cla
         test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=4)
         print('Classes used in the new dataset: %d to %d' % (num_classes, num_classes+increment_classes))
 
-        #old_train_dataset = old_video_dataset(train = True, classes = all_classes[:num_classes], num_classes = num_classes, samples = 10)
-        #old_train_dataloader = DataLoader(old_train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
+        old_train_dataset = old_video_dataset(train = True, classes = all_classes[:num_classes], num_classes = num_classes, samples = 10)
+        old_train_dataloader = DataLoader(old_train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
         
         #old_train_dataset = video_dataset(train = True, classes = all_classes[:num_classes])
         #old_train_dataloader = DataLoader(old_train_dataset, batch_size = batch_size, shuffle = True, num_workers = 4)
@@ -227,6 +227,7 @@ def train_model(dataset=dataset, save_dir=save_dir, load_dir = load_dir, num_cla
             model = model.to(device)
             classifier = classifier.to(device)
             generator = generator.to(device)
+            generator1 = generator1.to(device)
             discriminator = discriminator.to(device)
 
         num_epochs = num_epochs + increment
@@ -241,8 +242,6 @@ def train_model(dataset=dataset, save_dir=save_dir, load_dir = load_dir, num_cla
                 running_new_corrects = 0.0
 
                 optimizer = torch.optim.Adam(list(model.parameters())+list(classifier.parameters()), lr=lr[int(epoch/num_lr_stages)])
-                optimizer_G = torch.optim.Adam(generator.parameters(), lr=lr[0], betas=(b1, b2))
-                optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=lr[0], betas=(b1, b2))
 
                 model.train()
                 classifier.train()
@@ -259,25 +258,37 @@ def train_model(dataset=dataset, save_dir=save_dir, load_dir = load_dir, num_cla
 
 ############### Begin Incremental Training Of Conv-LSTM Model ############################
                     optimizer.zero_grad()
-                    old_labels = Variable(LongTensor(np.random.randint(0, num_classes, loop_batch_size)))
-                    old_semantic = att[old_labels]
-                    noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim))))
+                    old_labels = Variable(LongTensor(np.random.randint(0, num_classes, loop_batch_size))).cuda()
+                    old_semantic = att[old_labels].cuda()
+                    noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim)))).cuda()
                    
                     old_features = generator1(old_semantic.float(), noise)
                     new_features = model(image_sequences)
                     new_logits = classifier(new_features)
                     old_logits = classifier(old_features)
- 
-                    loss = nn.CrossEntropyLoss()(new_logits, labels) + nn.CrossEntropyLoss()(old_logits, old_labels)
+
+                    _, dataset_inputs, dataset_labels = next(iter(old_train_dataloader))
+                    dataset_inputs = dataset_inputs.permute(0,2,1,3,4)
+                    image_sequences = Variable(dataset_inputs.to(device), requires_grad=True)
+                    dataset_labels = Variable(dataset_labels.to(device), requires_grad=False)                
+
+                    model.lstm.reset_hidden_state()
+                    loop_batch_size = len(dataset_inputs)
+
+                    dataset_logits = classifier(model(image_sequences))
+                    
+                    loss = nn.CrossEntropyLoss()(new_logits, labels) + nn.CrossEntropyLoss()(old_logits, old_labels) + nn.CrossEntropyLoss()(dataset_logits, dataset_labels)
                     loss.backward()
                     optimizer.step()                    
     
                     _, old_predictions = torch.max(torch.softmax(old_logits, dim = 1), dim = 1, keepdim = False)
+                    _, dataset_predictions = torch.max(torch.softmax(dataset_logits, dim = 1), dim = 1, keepdim = False)
                     _, new_predictions = torch.max(torch.softmax(new_logits, dim = 1), dim = 1, keepdim = False)         
-                    running_old_corrects += torch.sum(old_predictions == old_labels.data)
+                    running_old_corrects += torch.sum(old_predictions == old_labels.data) 
+                    running_old_corrects += torch.sum(dataset_predictions == dataset_labels.data)
                     running_new_corrects += torch.sum(new_predictions == labels.data)
 
-                old_epoch_acc = running_old_corrects.double() / trainval_sizes['train']
+                old_epoch_acc = running_old_corrects.double() / (2*trainval_sizes['train'])
                 new_epoch_acc = running_new_corrects.double() / trainval_sizes['train']
 
                 words = 'data/old_train_acc_epoch' + str(i)
@@ -324,7 +335,7 @@ def train_model(dataset=dataset, save_dir=save_dir, load_dir = load_dir, num_cla
                         loop_batch_size = len(inputs)
                    
                         old_features = model(image_sequences)
-                        old_logits = classifier(new_features)
+                        old_logits = classifier(old_features)
      
                         _, old_predictions = torch.max(torch.softmax(old_logits, dim = 1), dim = 1, keepdim = False)         
                         running_old_corrects += torch.sum(old_predictions == labels.data)
@@ -361,11 +372,11 @@ def train_model(dataset=dataset, save_dir=save_dir, load_dir = load_dir, num_cla
                     model.lstm.reset_hidden_state()
                     loop_batch_size = len(inputs)
 
-                    valid = Variable(FloatTensor(loop_batch_size, 1).fill_(1.0), requires_grad=False)
-                    fake = Variable(FloatTensor(loop_batch_size, 1).fill_(0.0), requires_grad=False)
+                    valid = Variable(FloatTensor(loop_batch_size, 1).fill_(1.0), requires_grad=False).cuda()
+                    fake = Variable(FloatTensor(loop_batch_size, 1).fill_(0.0), requires_grad=False).cuda()
 
-                    noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim))))
-                    semantic_true = att[labels]
+                    noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim)))).cuda()
+                    semantic_true = att[labels].cuda()
  
                     optimizer_D.zero_grad()
 
@@ -391,10 +402,10 @@ def train_model(dataset=dataset, save_dir=save_dir, load_dir = load_dir, num_cla
 
 ############## Old Dataset Training ###########################
 
-                    old_labels = Variable(LongTensor(np.random.randint(0, num_classes, loop_batch_size)))
-                    noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim))))
-                    noise1 = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim))))
-                    semantic_true = att[old_labels]
+                    old_labels = Variable(LongTensor(np.random.randint(0, num_classes, loop_batch_size))).cuda()
+                    noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim)))).cuda()
+                    noise1 = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim)))).cuda()
+                    semantic_true = att[old_labels].cuda()
  
                     optimizer_D.zero_grad()
 
@@ -422,7 +433,40 @@ def train_model(dataset=dataset, save_dir=save_dir, load_dir = load_dir, num_cla
                     g_loss.backward(retain_graph = True)
                     optimizer_G.step()
 
-                    old_logits = classifier(gen_imgs)
+
+                    _, _, dataset_labels = next(iter(old_train_dataloader))
+                    dataset_labels = dataset_labels.cuda()
+                    noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim)))).cuda()
+                    semantic_true = att[dataset_labels].cuda()
+ 
+                    optimizer_D.zero_grad()
+
+                    true_features_2048 = generator1(semantic_true.float(), noise)
+                    validity_real = discriminator(true_features_2048.detach()).view(-1)
+                    d_real_loss = adversarial_loss(validity_real, valid)
+                    d_real_loss.backward(retain_graph = True)
+
+############## All Fake Batch Training #######################
+                    dataset_imgs = generator(semantic_true.float(), noise1)
+                    validity_fake = discriminator(dataset_imgs.detach()).view(-1)
+                    d_fake_loss = adversarial_loss(validity_fake, fake)
+                    d_fake_loss.backward(retain_graph = True)            
+                    optimizer_D.step()
+
+############## Generator training ########################
+                    optimizer_G.zero_grad()
+                    validity = discriminator(dataset_imgs).view(-1)
+                    g_loss = adversarial_loss(validity, valid)
+                    g_loss.backward(retain_graph = True)
+                    optimizer_G.step()   
+
+                    optimizer_G.zero_grad()
+                    g_loss = nn.L1Loss()(true_features_2048, dataset_imgs)
+                    g_loss.backward(retain_graph = True)
+                    optimizer_G.step()
+
+                    dataset_logits = classifier(dataset_imgs)
+                    old_logits = classifier(gen_imgs)   
                     new_logits = classifier(true_features_2048)
 
                     #if (args.distillation):
@@ -463,10 +507,12 @@ def train_model(dataset=dataset, save_dir=save_dir, load_dir = load_dir, num_cla
 
                     _, old_predictions = torch.max(torch.softmax(old_logits, dim = 1), dim = 1, keepdim = False)
                     _, new_predictions = torch.max(torch.softmax(new_logits, dim = 1), dim = 1, keepdim = False)         
+                    _, dataset_predictions = torch.max(torch.softmax(dataset_logits, dim = 1), dim = 1, keepdim = False)         
                     running_old_corrects += torch.sum(old_predictions == old_labels.data)
                     running_new_corrects += torch.sum(new_predictions == labels.data)
+                    running_old_corrects += torch.sum(dataset_predictions == dataset_labels.data) 
 
-                old_epoch_acc = running_old_corrects.double() / trainval_sizes['train']
+                old_epoch_acc = running_old_corrects.double() / (2*trainval_sizes['train'])
                 new_epoch_acc = running_new_corrects.double() / trainval_sizes['train']
 
                 words = 'data/gen_old_train_acc_epoch' + str(i)
@@ -489,9 +535,9 @@ def train_model(dataset=dataset, save_dir=save_dir, load_dir = load_dir, num_cla
                     for indices, inputs, labels in test_dataloader:
                         labels = Variable(labels.to(device), requires_grad=False)                
                         loop_batch_size = len(inputs)
-                        noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim))))
+                        noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim)))).cuda()
                    
-                        semantic = att[labels]
+                        semantic = att[labels].cuda()
                         new_features = generator(semantic.float(), noise)
                         new_logits = classifier(new_features)
      
@@ -507,9 +553,9 @@ def train_model(dataset=dataset, save_dir=save_dir, load_dir = load_dir, num_cla
                     for indices, inputs, labels in old_test_dataloader:
                         labels = Variable(labels.to(device), requires_grad=False)                
                         loop_batch_size = len(inputs)
-                        noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim))))
+                        noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim)))).cuda()
                    
-                        semantic = att[labels]
+                        semantic = att[labels].cuda()
                         old_features = generator(semantic.float(), noise)
                         old_logits = classifier(old_features)
      
