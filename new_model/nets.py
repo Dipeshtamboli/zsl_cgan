@@ -7,7 +7,7 @@ import torch.nn.functional as F
 import torch
 import numpy as np
 from torch.autograd import Variable
-from torchvision.models import resnet152
+from torchvision.models import resnet152, resnet50
 
 ##############################
 #         Encoder
@@ -141,6 +141,24 @@ class Generator(nn.Module):
         gen_input = torch.cat((semantic, noise), -1)
         feature = self.model(gen_input)
         return feature
+
+class Modified_Generator(nn.Module):
+    def __init__(self,semantic_dim,noise_dim,latent_dim = 2048):
+        super(Modified_Generator, self).__init__()
+
+        resnet = resnet50(pretrained=False)
+        self.feature_extractor = nn.Sequential(*list(resnet.children())[:-1])
+        self.final = nn.Sequential(
+            nn.Linear(resnet.fc.in_features, latent_dim), nn.BatchNorm1d(latent_dim, momentum=0.01)
+        )
+         
+    def forward(self, semantic, noise):
+        # Concatenate label embedding and image to produce input
+        gen_input = torch.cat((semantic, noise), -1)
+        feature = self.final(gen_input)
+        feature = feature.view(feature.size(0), -1)
+        return feature
+
 
 class Discriminator(nn.Module):
     def __init__(self, input_dim):
