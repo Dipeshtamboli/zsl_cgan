@@ -58,7 +58,7 @@ b2=0.999
 batch_size = 100
 input_dim = 2048
 semantic_dim = 300
-noise_dim = 100
+noise_dim = 1024
 increment = args.increment_epochs
 nEpochs = args.epochs - increment  # Number of epochs for training
 resume_epoch = args.resume_epoch  # Default is 0, change if want to resume
@@ -136,7 +136,7 @@ def train_model(dataset=dataset, save_dir=save_dir, load_dir = load_dir, num_cla
     )
 
     classifier = Classifier(num_classes = num_classes)
-    generator = Generator(semantic_dim, noise_dim)
+    generator = Modified_Generator(semantic_dim, noise_dim)
     discriminator = Discriminator(input_dim=input_dim)
 
 
@@ -404,7 +404,6 @@ def train_model(dataset=dataset, save_dir=save_dir, load_dir = load_dir, num_cla
 
                     old_labels = Variable(LongTensor(np.random.randint(0, num_classes, loop_batch_size))).cuda()
                     noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim)))).cuda()
-                    noise1 = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim)))).cuda()
                     semantic_true = att[old_labels].cuda()
  
                     optimizer_D.zero_grad()
@@ -415,7 +414,7 @@ def train_model(dataset=dataset, save_dir=save_dir, load_dir = load_dir, num_cla
                     d_real_loss.backward(retain_graph = True)
 
 ############## All Fake Batch Training #######################
-                    gen_imgs = generator(semantic_true.float(), noise1)
+                    gen_imgs = generator(semantic_true.float(), noise)
                     validity_fake = discriminator(gen_imgs.detach()).view(-1)
                     d_fake_loss = adversarial_loss(validity_fake, fake)
                     d_fake_loss.backward(retain_graph = True)            
@@ -424,30 +423,28 @@ def train_model(dataset=dataset, save_dir=save_dir, load_dir = load_dir, num_cla
 ############## Generator training ########################
                     optimizer_G.zero_grad()
                     validity = discriminator(gen_imgs).view(-1)
-                    g_loss = adversarial_loss(validity, valid)
+                    g_loss = adversarial_loss(validity, valid) + 25*nn.MSELoss()(gen_imgs, true_features_2048)
                     g_loss.backward(retain_graph = True)
                     optimizer_G.step()   
 
-                    optimizer_G.zero_grad()
-                    g_loss = nn.L1Loss()(true_features_2048, gen_imgs)
-                    g_loss.backward(retain_graph = True)
-                    optimizer_G.step()
-
-
                     _, _, dataset_labels = next(iter(old_train_dataloader))
+                    loop_batch_size = len(dataset_labels)
                     dataset_labels = dataset_labels.cuda()
                     noise = Variable(FloatTensor(np.random.normal(0, 1, (loop_batch_size, noise_dim)))).cuda()
                     semantic_true = att[dataset_labels].cuda()
  
+                    valid = Variable(FloatTensor(loop_batch_size, 1).fill_(1.0), requires_grad=False).cuda()
+                    fake = Variable(FloatTensor(loop_batch_size, 1).fill_(0.0), requires_grad=False).cuda()
+
                     optimizer_D.zero_grad()
 
-                    true_features_2048 = generator1(semantic_true.float(), noise)
-                    validity_real = discriminator(true_features_2048.detach()).view(-1)
+                    dataset_true_features_2048 = generator1(semantic_true.float(), noise)
+                    validity_real = discriminator(dataset_true_features_2048.detach()).view(-1)
                     d_real_loss = adversarial_loss(validity_real, valid)
                     d_real_loss.backward(retain_graph = True)
 
 ############## All Fake Batch Training #######################
-                    dataset_imgs = generator(semantic_true.float(), noise1)
+                    dataset_imgs = generator(semantic_true.float(), noise)
                     validity_fake = discriminator(dataset_imgs.detach()).view(-1)
                     d_fake_loss = adversarial_loss(validity_fake, fake)
                     d_fake_loss.backward(retain_graph = True)            
@@ -456,14 +453,9 @@ def train_model(dataset=dataset, save_dir=save_dir, load_dir = load_dir, num_cla
 ############## Generator training ########################
                     optimizer_G.zero_grad()
                     validity = discriminator(dataset_imgs).view(-1)
-                    g_loss = adversarial_loss(validity, valid)
+                    g_loss = adversarial_loss(validity, valid) + 25*nn.MSELoss()(dataset_true_features_2048, dataset_imgs)
                     g_loss.backward(retain_graph = True)
                     optimizer_G.step()   
-
-                    optimizer_G.zero_grad()
-                    g_loss = nn.L1Loss()(true_features_2048, dataset_imgs)
-                    g_loss.backward(retain_graph = True)
-                    optimizer_G.step()
 
                     dataset_logits = classifier(dataset_imgs)
                     old_logits = classifier(gen_imgs)   
