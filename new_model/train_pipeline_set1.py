@@ -54,7 +54,7 @@ b2=0.999
 batch_size = 100
 input_dim = 2048
 semantic_dim = 300
-noise_dim = 100
+noise_dim = 1024
 nEpochs = args.epochs  # Number of epochs for training
 resume_epoch = args.resume_epoch  # Default is 0, change if want to resume
 useTest = True # See evolution of the test set when training
@@ -310,7 +310,9 @@ def train_model(dataset=dataset, save_dir=save_dir, load_dir = load_dir, num_cla
 ############## Generator training ########################
                 optimizer_G.zero_grad()
                 validity = discriminator(gen_imgs).view(-1)
-                g_loss = adversarial_loss(validity, valid)
+                gen_adv = adversarial_loss(validity, valid)
+                L2_loss = nn.MSELoss()(gen_imgs, true_features_2048)
+                g_loss = gen_adv + 25*L2_loss
                 g_loss.backward(retain_graph = True)
                 optimizer_G.step()                
 
