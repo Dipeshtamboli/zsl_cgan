@@ -6,3 +6,25 @@
 *.tar
 ucf_split1/*
 semantic_data/*
+
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter
+.ipynb_checkpoints/
+
+# TensorBoard / training logs
+runs/
+*.tfevents.*
+events.out.tfevents.*
+
+# OS / editor
+.DS_Store
+*.swp
+
+# Environments
+.venv/
+venv/
+env/
